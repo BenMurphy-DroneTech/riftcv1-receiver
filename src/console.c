@@ -173,7 +173,8 @@ static void print_help(void)
 	printk("\ninfo                         Get device information\n");
 	printk("uptime                       Get device uptime\n");
 	printk("list                         Get paired devices\n");
-	printk("reboot                       Soft reset the device\n");
+	printk("stats                        Get packet rate and loss since the last stats\n");
+	printk("reboot                      Soft reset the device\n");
 	printk("\nadd <address>                Manually add a device\n");
 	printk("remove                       Remove last device\n");
 	printk("pair                         Enter pairing mode\n");
@@ -200,6 +201,7 @@ static void console_thread(void)
 	const char command_info[] = "info";
 	const char command_uptime[] = "uptime";
 	const char command_list[] = "list";
+	const char command_stats[] = "stats";
 	const char command_reboot[] = "reboot";
 	const char command_add[] = "add";
 	const char command_remove[] = "remove";
@@ -258,6 +260,10 @@ static void console_thread(void)
 		else if (strcmp(line, command_list) == 0)
 		{
 			print_list();
+		}
+		else if (strcmp(line, command_stats) == 0)
+		{
+			esb_print_stats();
 		}
 		else if (strcmp(line, command_reboot) == 0)
 		{

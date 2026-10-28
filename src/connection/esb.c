@@ -47,6 +47,48 @@ int64_t last_seq_time[256] = {[0 ... 255] = -1000};
 uint16_t packets_count[256] = {0};
 uint8_t packets_lost[256] = {0};
 
+// Link statistics for the stats command: packets taken and sequence gaps per tracker
+static uint32_t stats_rx[MAX_TRACKERS] = {0};
+static uint32_t stats_lost[MAX_TRACKERS] = {0};
+static int32_t stats_rssi[MAX_TRACKERS] = {0};
+static int16_t stats_last_seq[MAX_TRACKERS] = {[0 ... MAX_TRACKERS - 1] = -1};
+static int64_t stats_start = 0;
+
+static void esb_stats_count(uint8_t id, int seq, int8_t rssi)
+{
+	stats_rx[id]++;
+	stats_rssi[id] += rssi;
+	if (seq < 0)
+		return;
+	if (stats_last_seq[id] >= 0)
+	{
+		uint8_t gap = (uint8_t)(seq - stats_last_seq[id] - 1);
+		if (gap < 128) // larger means out of order, not lost
+			stats_lost[id] += gap;
+	}
+	stats_last_seq[id] = seq;
+}
+
+void esb_print_stats(void)
+{
+	int64_t now = k_uptime_get();
+	int64_t ms = now - stats_start;
+	printk("Over %lld ms:\n", ms);
+	for (int i = 0; i < stored_trackers; i++)
+	{
+		uint32_t rx = stats_rx[i], lost = stats_lost[i];
+		uint32_t sent = rx + lost;
+		printk("id %d: %u packets, %u.%u/s, %u lost (%u.%02u%%), rssi %d\n", i, rx,
+			   ms ? (uint32_t)(rx * 1000ULL / ms) : 0, ms ? (uint32_t)(rx * 10000ULL / ms % 10) : 0,
+			   lost, sent ? lost * 100 / sent : 0, sent ? lost * 10000 / sent % 100 : 0,
+			   rx ? (int)(stats_rssi[i] / (int32_t)rx) : 0);
+		stats_rx[i] = 0;
+		stats_lost[i] = 0;
+		stats_rssi[i] = 0;
+	}
+	stats_start = now;
+}
+
 LOG_MODULE_REGISTER(esb_event, LOG_LEVEL_INF);
 
 static void esb_packet_filter_thread(void);
@@ -104,6 +146,7 @@ void event_handler(struct esb_evt const *event)
 		int err = 0;
 		while (!err) // zero, rx success
 		{
+			int stats_seq = -1;
 			err = esb_read_rx_payload(&rx_payload);
 			if (err == -ENODATA)
 			{
@@ -147,6 +190,7 @@ void event_handler(struct esb_evt const *event)
 				// But brain hurty, will make a better one later
 				uint8_t seq = rx_payload.data[20];
 				uint8_t tracker_id = rx_payload.data[1];
+				stats_seq = seq;
 				uint8_t next = sequences[tracker_id] + 1; // wrap
 				if(seq != 0 && sequences[tracker_id] != 0 && next != seq) {
 					if (k_uptime_get() - last_seq_time[tracker_id] < 100 && ((next < 128) // reset sequence if last packet was over 100ms old
@@ -174,6 +218,7 @@ void event_handler(struct esb_evt const *event)
 				uint8_t imu_id = rx_payload.data[1];
 				if (imu_id >= stored_trackers) // not a stored tracker
 					continue;
+				esb_stats_count(imu_id, stats_seq, rx_payload.rssi);
 				if (discovered_trackers[imu_id] < DETECTION_THRESHOLD) // garbage filtering of nonexistent tracker
 				{
 					discovered_trackers[imu_id]++;
