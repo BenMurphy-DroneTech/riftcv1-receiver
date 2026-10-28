@@ -22,6 +22,7 @@
 */
 #include "globals.h"
 #include "system/system.h"
+#include "rift/rift.h"
 
 #include <zephyr/kernel.h>
 
@@ -29,6 +30,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 int main(void)
 {
+	rift_init(); // the camera beacon, before ESB starts
 	set_led(SYS_LED_PATTERN_ACTIVE_PERSIST, SYS_LED_PRIORITY_SYSTEM);
 
 	return 0;

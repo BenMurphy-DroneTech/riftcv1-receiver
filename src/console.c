@@ -33,6 +33,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/logging/log_ctrl.h>
 #include "connection/esb.h"
+#include "rift/rift.h"
 
 #include <ctype.h>
 
@@ -184,6 +185,9 @@ static void print_help(void)
 	printk("\ndfu                          Enter DFU bootloader\n");
 #endif
 	printk("\nmeow                         Meow!\n");
+
+	printk("\nCamera beacon: <us>, <fps>fps, +, -, step <us>, width <us>, off <us>, led on|off, ?,\n");
+	printk("sweep [step [start [count]]]|off, wrap [s], pause [ms], addr [hex]; stats includes it\n");
 }
 
 static void console_thread(void)
@@ -215,6 +219,10 @@ static void console_thread(void)
 
 	while (1) {
 		char *line = console_getline();
+		char raw[CONFIG_CONSOLE_INPUT_MAX_LINE_LEN];
+
+		strncpy(raw, line, sizeof(raw) - 1); // the whole line, for the beacon commands
+		raw[sizeof(raw) - 1] = '\0';
 
 		char* argv[5] = {NULL}; // command and 4 args
 		size_t argc = parse_args(line, argv, ARRAY_SIZE(argv));
@@ -264,6 +272,7 @@ static void console_thread(void)
 		else if (strcmp(line, command_stats) == 0)
 		{
 			esb_print_stats();
+			rift_print_stats();
 		}
 		else if (strcmp(line, command_reboot) == 0)
 		{
@@ -300,7 +309,7 @@ static void console_thread(void)
 		}
 		else
 		{
-			printk("Unknown command\n");
+			rift_command(raw); // the camera beacon's commands
 		}
 	}
 }

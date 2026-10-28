@@ -8,3 +8,9 @@ manifest:
       url: https://github.com/nrfconnect/sdk-nrf.git
       revision: v3.3.0-preview3-branch
       import: true
+
+    # riftcv1-mocap: the camera beacon (firmware/rift_common)
+    - name: riftcv1-mocap
+      path: riftcv1-mocap
+      url: https://github.com/BenMurphy-DroneTech/riftcv1-mocap.git
+      revision: 64ca4fe73ea21c88f435f2c220819e8f3cbb1054

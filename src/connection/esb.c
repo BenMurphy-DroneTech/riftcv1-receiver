@@ -29,6 +29,7 @@
 #include <zephyr/sys/crc.h>
 
 #include "esb.h"
+#include "rift/rift.h"
 
 static struct esb_payload rx_payload;
 //static struct esb_payload tx_payload = ESB_CREATE_PAYLOAD(0,
@@ -289,6 +290,13 @@ static uint8_t base_addr_0[4], base_addr_1[4], addr_prefix[8] = {0};
 
 static bool esb_initialized = false;
 
+static void esb_start_rx_shared(void) // esb_start_rx, not while the camera beacon has the radio
+{
+	unsigned int key = rift_radio_lock();
+	esb_start_rx();
+	rift_radio_unlock(key);
+}
+
 int esb_initialize(bool tx)
 {
 	if (esb_initialized)
@@ -329,6 +337,7 @@ int esb_initialize(bool tx)
 	}
 
 	LOG_INF("Initializing ESB, %sX mode", tx ? "T" : "R");
+	unsigned int key = rift_radio_lock(); // not while the camera beacon has the radio
 	err = esb_init(&config);
 
 	if (!err)
@@ -339,6 +348,7 @@ int esb_initialize(bool tx)
 
 	if (!err)
 		esb_set_prefixes(addr_prefix, ARRAY_SIZE(addr_prefix));
+	rift_radio_unlock(key);
 
 	if (err)
 	{
@@ -364,7 +374,9 @@ static void esb_deinitialize(void)
 			LOG_INF("ESB denitialize cancelled");
 			return;
 		}
+		unsigned int key = rift_radio_lock();
 		esb_disable();
+		rift_radio_unlock(key);
 	}
 	esb_initialized = false;
 }
@@ -492,7 +504,7 @@ void esb_pair(void)
 	LOG_INF("Pairing");
 	esb_set_addr_paired();
 	esb_initialize(false);
-	esb_start_rx();
+	esb_start_rx_shared();
 	tx_payload_pair.pipe = 0;
 	tx_payload_pair.noack = false;
 	uint64_t *addr = (uint64_t *)NRF_FICR->DEVICEADDR; // Use device address as unique identifier (although it is not actually guaranteed, see datasheet)
@@ -506,7 +518,7 @@ void esb_pair(void)
 		if (!esb_initialized)
 		{
 			esb_initialize(false);
-			esb_start_rx();
+			esb_start_rx_shared();
 		}
 		switch (pairing_buf[1])
 		{
@@ -599,7 +611,7 @@ static void esb_thread(void)
 	{
 		esb_receive();
 		esb_initialize(false);
-		esb_start_rx();
+		esb_start_rx_shared();
 	}
 
 	while (1)
@@ -609,7 +621,7 @@ static void esb_thread(void)
 			esb_pair();
 			esb_receive();
 			esb_initialize(false);
-			esb_start_rx();
+			esb_start_rx_shared();
 		}
 		k_msleep(100);
 	}

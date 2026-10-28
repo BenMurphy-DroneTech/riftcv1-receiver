@@ -33,6 +33,10 @@
 
 #include "esb_glue.h"
 
+/* riftcv1: the acknowledgement payload hook and the radio hand-over, in the
+ * receiver's src/rift/rift.c */
+#include "rift/rift_esb.h"
+
 LOG_MODULE_REGISTER(esb, CONFIG_ESB_LOG_LEVEL);
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_ESB_MPSL_TIMESLOT) || ESB_NRF_TIMER_INSTANCE == MPSL_TIMER0,
@@ -2045,6 +2049,12 @@ static void prepare_ack_pdu_dpl(bool retransmit_payload, struct pipe_info *pipe_
 		tx_pdu->type.dpl_pdu.length = 0;
 	}
 
+	/* riftcv1: with nothing queued, the acknowledgement carries this packet's
+	 * arrival time; the TX ramp-up has started, so this is in time */
+	if (tx_pdu->type.dpl_pdu.length == 0) {
+		tx_pdu->type.dpl_pdu.length = rift_ack_payload(pipe, tx_pdu->data);
+	}
+
 	tx_pdu->type.dpl_pdu.pid = rx_pdu->type.dpl_pdu.pid;
 	tx_pdu->type.dpl_pdu.ack = rx_pdu->type.dpl_pdu.ack;
 }
@@ -2568,6 +2578,12 @@ void esb_disable(void)
 bool esb_is_idle(void)
 {
 	return (esb_state == ESB_STATE_IDLE);
+}
+
+/* riftcv1: true while PRX listens or sends an acknowledgement */
+bool esb_rift_rx_active(void)
+{
+	return esb_state == ESB_STATE_PRX || esb_state == ESB_STATE_PRX_SEND_ACK;
 }
 
 static struct payload_wrap *find_free_payload_cont(void)
