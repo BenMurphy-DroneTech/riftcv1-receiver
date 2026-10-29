@@ -247,6 +247,21 @@ static void timer3_isr(const void *arg)
 	}
 }
 
+/* The last packet's arrival on the beacon clock, for rift_imu_rx */
+static volatile uint32_t arrival_frame, arrival_offset;
+static volatile bool arrival_valid;
+
+bool rift_last_arrival(uint32_t *frame, uint32_t *offset)
+{
+	unsigned int key = irq_lock();
+	bool valid = arrival_valid;
+
+	*frame = arrival_frame;
+	*offset = arrival_offset;
+	irq_unlock(key);
+	return valid;
+}
+
 uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 {
 	if (pipe == 0) {
@@ -254,12 +269,10 @@ uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 	}
 	if (NRF_PPI->CHEN & BIT(addr_ch)) {
 		acks_no_capture++;   /* no ADDRESS since the last RXREADY */
+		arrival_valid = false;
 		return 0;
 	}
-	if (NRF_RADIO->STATE != RADIO_STATE_STATE_TxRu) {
-		acks_late++;   /* the acknowledgement is already going out */
-		return 0;
-	}
+	bool late = NRF_RADIO->STATE != RADIO_STATE_STATE_TxRu;
 	uint32_t c = NRF_TIMER3->CC[0];
 	unsigned int key = irq_lock();
 	uint32_t a_t3 = anchor_t3, a_local = anchor_local, ofs = beacon_clock_offset();
@@ -272,6 +285,13 @@ uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 	uint32_t frame = us / period;
 	uint32_t offset = (us % period) * 16 + (d & 15);
 
+	arrival_frame = frame;
+	arrival_offset = offset;
+	arrival_valid = true;
+	if (late) {
+		acks_late++;   /* the acknowledgement is already going out */
+		return 0;
+	}
 	data[0] = RIFT_ACK_TIME;
 	sys_put_le32(frame, &data[1]);
 	sys_put_le24(offset, &data[5]);

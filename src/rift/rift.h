@@ -24,6 +24,11 @@
 
 /* From the ESB handler: a frame packet, queued to be printed as IMU <hex>. */
 void rift_imu_rx(const uint8_t *data);
+
+/* The last received packet's arrival (its RADIO ADDRESS) on the beacon clock:
+ * frame number and offset in 1/16 us, as in the acknowledgement; false if it
+ * wasn't captured. */
+bool rift_last_arrival(uint32_t *frame, uint32_t *offset);
 void rift_imu_print_stats(void);
 
 /* Starts the beacon; call before ESB starts. */
