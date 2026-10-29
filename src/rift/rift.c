@@ -18,9 +18,15 @@
  *   CC3  capture of now
  *   CC4  compare: restore, after the beacon: radio registers back, ESB
  *        restarted, the slot's work (LED flash) done, the next prepare set
+ *   CC5  capture of now in rift_ack_payload: a CC0 older than CAPTURE_MAX_US
+ *        belongs to an earlier ADDRESS (a packet that failed its CRC fires
+ *        ADDRESS too, and reception carries on without a new RXREADY), so
+ *        that acknowledgement gets no timestamp
  * The patched ESB (esb/esb.c) calls rift_ack_payload while each
  * acknowledgement ramps up; it turns CC0 into the beacon clock.
  */
+#include <string.h>
+#include <stdlib.h>
 #include <zephyr/kernel.h>
 #include <zephyr/irq.h>
 #include <zephyr/sys/printk.h>
@@ -50,7 +56,9 @@ static uint32_t slot_ts, slot_local;
 static volatile uint32_t anchor_t3, anchor_local;
 static int addr_ch, rxready_ch, addr_group;
 
-static uint32_t acks_stamped, acks_late, acks_no_capture;
+static uint32_t acks_stamped, acks_late, acks_no_capture, acks_stale;
+#define CAPTURE_MAX_US 500   /* ADDRESS to the acknowledgement's ramp-up: a 36-byte
+				packet's airtime and the turnaround are under 350 us */
 static uint32_t prep_max_ticks, tie_err_max, ties;
 
 static K_MUTEX_DEFINE(rift_mutex);
@@ -262,6 +270,16 @@ bool rift_last_arrival(uint32_t *frame, uint32_t *offset)
 	return valid;
 }
 
+/* The command for the bands, carried by every acknowledgement until its frame is
+ * CMD_STOP_FRAMES away (commands name a frame far enough ahead that many
+ * acknowledgements carry it; a band takes the same command any number of times) */
+#define CMD_STOP_FRAMES 2
+#define CMD_LEAD_FRAMES 30   /* the default: a third of a second ahead */
+static volatile bool cmd_live;
+static volatile uint8_t cmd_type, cmd_band, cmd_arg;
+static volatile uint32_t cmd_frame;
+static uint32_t cmd_sent;
+
 uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 {
 	if (pipe == 0) {
@@ -274,6 +292,13 @@ uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 	}
 	bool late = NRF_RADIO->STATE != RADIO_STATE_STATE_TxRu;
 	uint32_t c = NRF_TIMER3->CC[0];
+
+	NRF_TIMER3->TASKS_CAPTURE[5] = 1;
+	if (NRF_TIMER3->CC[5] - c > 16u * CAPTURE_MAX_US) {
+		acks_stale++;   /* an earlier ADDRESS's capture, not this packet's */
+		arrival_valid = false;
+		return 0;
+	}
 	unsigned int key = irq_lock();
 	uint32_t a_t3 = anchor_t3, a_local = anchor_local, ofs = beacon_clock_offset();
 
@@ -297,6 +322,15 @@ uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 	sys_put_le24(offset, &data[5]);
 	sys_put_le16(period, &data[8]);
 	acks_stamped++;
+	if (cmd_live && (int32_t)(cmd_frame - frame) > CMD_STOP_FRAMES) {
+		data[10] = cmd_type;
+		data[11] = cmd_band;
+		sys_put_le32(cmd_frame, &data[12]);
+		data[16] = cmd_arg;
+		cmd_sent++;
+		return RIFT_ACK_CMD_LEN;
+	}
+	cmd_live = false;
 	return RIFT_ACK_LEN;
 }
 
@@ -328,8 +362,72 @@ void beacon_app_unlock(unsigned int key)
 	rift_radio_unlock(key);
 }
 
+/* rollcall [lead] | blink <channel> [lead] | sleepall [lead]: a command for every
+ * band, lead frames ahead (default CMD_LEAD_FRAMES); answers CMD <what> frame N */
+static bool band_command(const char *line)
+{
+	static const char *names[] = {NULL, "rollcall", "blink", "sleepall"};
+	uint8_t type = 0;
+	const char *a = line;
+
+	for (uint8_t t = 1; t < ARRAY_SIZE(names); t++) {
+		size_t n = strlen(names[t]);
+
+		if (!strncmp(line, names[t], n) && (line[n] == 0 || line[n] == ' ')) {
+			type = t;
+			a = line + n;
+		}
+	}
+	if (!type) {
+		return false;
+	}
+	char *end;
+	long arg = 0, lead = CMD_LEAD_FRAMES;
+
+	if (type == RIFT_CMD_BLINK) {
+		arg = strtol(a, &end, 10);
+		if (end == a || arg < 0 || arg > 1) {
+			printk("# blink <channel 0 or 1> [frames ahead]\n");
+			return true;
+		}
+		a = end;
+	}
+	while (*a == ' ') {
+		a++;
+	}
+	if (*a) {
+		lead = strtol(a, &end, 10);
+		if (*end || lead < 5 || lead > 9000) {
+			printk("# frames ahead: 5 to 9000\n");
+			return true;
+		}
+	}
+	uint32_t period = beacon_app_period();
+	uint32_t frame = (beacon_now() + beacon_clock_offset()) / period + (uint32_t)lead;
+	unsigned int key = irq_lock();
+
+	cmd_type = type;
+	cmd_band = RIFT_CMD_ALL;
+	cmd_arg = (uint8_t)arg;
+	cmd_frame = frame;
+	cmd_live = true;
+	cmd_sent = 0;
+	irq_unlock(key);
+	if (type == RIFT_CMD_ROLL_CALL) {
+		printk("CMD rollcall frames %u-%u\n", frame, frame + 4);
+	} else if (type == RIFT_CMD_BLINK) {
+		printk("CMD blink channel %ld frame %u\n", arg, frame);
+	} else {
+		printk("CMD sleepall frame %u\n", frame);
+	}
+	return true;
+}
+
 void rift_command(const char *line)
 {
+	if (band_command(line)) {
+		return;
+	}
 	k_mutex_lock(&rift_mutex, K_FOREVER);
 	beacon_app_command(line);
 	k_mutex_unlock(&rift_mutex);
@@ -339,11 +437,12 @@ void rift_print_stats(void)
 {
 	k_mutex_lock(&rift_mutex, K_FOREVER);
 	beacon_app_stats();
-	printk("# acks: %u stamped, %u late, %u without a capture; prepare up to %u.%02u us; "
+	printk("# command: %s, carried by %u acknowledgements\n", cmd_live ? "pending" : "none", cmd_sent);
+	printk("# acks: %u stamped, %u late, %u without a capture, %u stale; prepare up to %u.%02u us; "
 	       "timer tie within %u/16 us over %u beacons\n",
-	       acks_stamped, acks_late, acks_no_capture, prep_max_ticks / 16,
+	       acks_stamped, acks_late, acks_no_capture, acks_stale, prep_max_ticks / 16,
 	       (prep_max_ticks % 16) * 100 / 16, tie_err_max, ties);
-	acks_stamped = acks_late = acks_no_capture = 0;
+	acks_stamped = acks_late = acks_no_capture = acks_stale = 0;
 	k_mutex_unlock(&rift_mutex);
 }
 

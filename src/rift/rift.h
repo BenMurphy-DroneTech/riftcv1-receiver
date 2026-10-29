@@ -17,6 +17,20 @@
 #define RIFT_ACK_TIME 0xe0
 #define RIFT_ACK_LEN  10
 
+/* While a command for the bands is pending, every acknowledgement carries it
+ * after the timestamp (17 bytes in all) until CMD_STOP_FRAMES before its frame:
+ *   [10]      command: RIFT_CMD_ROLL_CALL (frames N to N+4, each channel dark in
+ *             frame N+k when bit k of its marker ID is set), RIFT_CMD_BLINK
+ *             (channel arg dark in frame N), RIFT_CMD_SLEEP_ALL (off at frame N)
+ *   [11]      band (tracker id), RIFT_CMD_ALL for every band
+ *   [12..15]  frame N on the beacon clock, uint32 LE
+ *   [16]      arg */
+#define RIFT_ACK_CMD_LEN   17
+#define RIFT_CMD_ROLL_CALL 1
+#define RIFT_CMD_BLINK     2
+#define RIFT_CMD_SLEEP_ALL 3
+#define RIFT_CMD_ALL       0xff
+
 /* The band's frame packet (riftcv1-band src/connection/rift_imu.h has the layout),
  * 36 bytes: RIFT_IMU_PACKET, tracker id, then two IMU slices and the orientation */
 #define RIFT_IMU_PACKET 0xe1
