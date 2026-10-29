@@ -6,6 +6,7 @@
 #define RIFT_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Acknowledgement payload (receiver to band), 10 bytes:
  *   [0]     RIFT_ACK_TIME
@@ -15,6 +16,15 @@
  * The time is the packet's RADIO ADDRESS event at the receiver. */
 #define RIFT_ACK_TIME 0xe0
 #define RIFT_ACK_LEN  10
+
+/* The band's frame packet (riftcv1-band src/connection/rift_imu.h has the layout),
+ * 36 bytes: RIFT_IMU_PACKET, tracker id, then two IMU slices and the orientation */
+#define RIFT_IMU_PACKET 0xe1
+#define RIFT_IMU_LEN    36
+
+/* From the ESB handler: a frame packet, queued to be printed as IMU <hex>. */
+void rift_imu_rx(const uint8_t *data);
+void rift_imu_print_stats(void);
 
 /* Starts the beacon; call before ESB starts. */
 void rift_init(void);

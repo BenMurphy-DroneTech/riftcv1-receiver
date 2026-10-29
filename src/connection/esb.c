@@ -229,6 +229,12 @@ void event_handler(struct esb_evt const *event)
 					break;
 				hid_write_packet_n(rx_payload.data, rx_payload.rssi); // write to hid endpoint
 				break;
+			case RIFT_IMU_LEN: // riftcv1-band's frame packet: printed, not passed to the server
+				if (rx_payload.data[0] != RIFT_IMU_PACKET || rx_payload.data[1] >= stored_trackers)
+					break;
+				esb_stats_count(rx_payload.data[1], -1, rx_payload.rssi); // (its own sequence)
+				rift_imu_rx(rx_payload.data);
+				break;
 			default:
 				LOG_ERR("Wrong packet length: %d", rx_payload.length);
 				break;

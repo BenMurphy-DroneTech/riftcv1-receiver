@@ -273,6 +273,7 @@ static void console_thread(void)
 		{
 			esb_print_stats();
 			rift_print_stats();
+			rift_imu_print_stats();
 		}
 		else if (strcmp(line, command_reboot) == 0)
 		{
