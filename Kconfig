@@ -4,6 +4,12 @@
 # SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
 #
 
+config RIFT_FAST_RAMP_UP
+    bool "ESB fast radio ramp-up"
+    help
+      40 us radio ramp-ups in place of about 130 us, for the band packet
+      timing plan's sub-slots. The bands have to be built the same way.
+
 choice
 	prompt "Status LED color mapping"
     default LED_TRI_COLOR

@@ -19,7 +19,7 @@
 #define ITEM (RIFT_IMU_LEN + 9)   /* the packet, then valid, frame and offset */
 
 K_MSGQ_DEFINE(rift_imu_q, ITEM, QUEUE, 4);
-static uint32_t n_received, n_no_room;
+static uint32_t n_received, n_no_room, n_b_test;
 
 void rift_imu_rx(const uint8_t *data)
 {
@@ -36,9 +36,15 @@ void rift_imu_rx(const uint8_t *data)
 	}
 }
 
+void rift_b_test_rx(void)
+{
+	n_b_test++;
+}
+
 void rift_imu_print_stats(void)
 {
-	printk("# imu: %u frame packets, %u dropped for want of room\n", n_received, n_no_room);
+	printk("# imu: %u frame packets, %u dropped for want of room; %u test packets B\n", n_received,
+	       n_no_room, n_b_test);
 }
 
 static void rift_imu_thread(void)

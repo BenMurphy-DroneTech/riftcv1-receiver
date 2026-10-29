@@ -184,6 +184,11 @@ void event_handler(struct esb_evt const *event)
 				continue;
 			default: // base address 1
 			}
+			if (rx_payload.length == RIFT_B_TEST_LEN && rx_payload.data[0] == RIFT_B_TEST)
+			{
+				rift_b_test_rx(); // riftcv1-band's airtime test packet: counted, not passed on
+				continue;
+			}
 			switch (rx_payload.length)
 			{
 			case 21: // has sequence number
@@ -324,7 +329,7 @@ int esb_initialize(bool tx)
 		config.tx_mode = ESB_TXMODE_MANUAL;
 		// config.payload_length = 32;
 		config.selective_auto_ack = true;
-//		config.use_fast_ramp_up = true;
+		config.use_fast_ramp_up = IS_ENABLED(CONFIG_RIFT_FAST_RAMP_UP); // the bands must match
 	}
 	else
 	{
@@ -339,7 +344,7 @@ int esb_initialize(bool tx)
 		// config.tx_mode = ESB_TXMODE_AUTO;
 		// config.payload_length = 32;
 		config.selective_auto_ack = true;
-//		config.use_fast_ramp_up = true;
+		config.use_fast_ramp_up = IS_ENABLED(CONFIG_RIFT_FAST_RAMP_UP); // the bands must match
 	}
 
 	LOG_INF("Initializing ESB, %sX mode", tx ? "T" : "R");

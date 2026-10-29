@@ -39,6 +39,14 @@
 /* From the ESB handler: a frame packet, queued to be printed as IMU <hex>. */
 void rift_imu_rx(const uint8_t *data);
 
+/* The band's airtime test packet B (riftcv1-band src/connection/rift_airtime.h),
+ * sent without an acknowledgement: RIFT_B_TEST, tracker id, a count, zeros */
+#define RIFT_B_TEST     0xe2
+#define RIFT_B_TEST_LEN 20
+
+/* From the ESB handler: a test packet B, counted in the imu stats line. */
+void rift_b_test_rx(void);
+
 /* The last received packet's arrival (its RADIO ADDRESS) on the beacon clock:
  * frame number and offset in 1/16 us, as in the acknowledgement; false if it
  * wasn't captured. */
