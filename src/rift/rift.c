@@ -3,9 +3,10 @@
  * link, and the beacon-clock timestamps in the band acknowledgements.
  *
  * The beacon is riftcv1-mocap's firmware/rift_common (a west project, built
- * with RIFT_SHARED): beacon_tx sends a CV1 sync beacon every 2000 us, started
- * by TIMER2 (1 MHz, the beacon's clock) CC2 through PPI, and beacon_app keeps
- * its settings and commands. Between beacons the radio is ESB's.
+ * with RIFT_SHARED): beacon_tx keeps 2000 us slots and sends a CV1 sync beacon
+ * in one of them a frame (at boundary + its frame offset), started by TIMER2
+ * (1 MHz, the beacon's clock) CC2 through PPI, and beacon_app keeps its
+ * settings and commands. ESB has the radio except around that one beacon.
  *
  * TIMER3 counts at 16 MHz from the same crystal, so it stays tied to TIMER2;
  * the tie (anchor_t3 at TIMER2 = anchor_local) is refreshed from every beacon,
@@ -13,7 +14,9 @@
  *   CC0  capture of RADIO ADDRESS, only the first after each RXREADY (a PPI
  *        group), so it holds the arrival of the packet being received
  *   CC1  compare: prepare, PREP_US before the beacon's TXEN: stop ESB, save the
- *        radio registers, set up and arm the beacon
+ *        radio registers, set up and arm the beacon. For a slot without a
+ *        beacon it falls RESTORE_US after the slot time instead and only does
+ *        the slot's work (LED flash), leaving ESB listening
  *   CC2  capture of the beacon's TXEN (the tie)
  *   CC3  capture of now
  *   CC4  compare: restore, after the beacon: radio registers back, ESB
@@ -42,7 +45,7 @@
 
 #define PREP_US      100   /* prepare this long before TXEN               */
 #define MIN_LEAD_US  30    /* less than this to TXEN: skip the slot        */
-#define RESTORE_US   130   /* restore this long after the slot time; the
+#define RESTORE_US   130   /* restore this long after the send time; the
 				beacon is on air from 0 to 120 us           */
 #define DONE_US      250   /* wait at most until then for it to finish     */
 
@@ -51,7 +54,8 @@ static volatile int state = IDLE;
 static volatile bool due_prepare, due_restore;
 static bool esb_was_rx;
 static int slot_arm;
-static uint32_t slot_ts, slot_local;
+static uint64_t slot_ts;
+static uint32_t slot_local;   /* the beacon's send time on TIMER2 */
 
 static volatile uint32_t anchor_t3, anchor_local;
 static int addr_ch, rxready_ch, addr_group;
@@ -153,17 +157,30 @@ static void t3_compare(int cc, uint32_t t, volatile bool *due)
 	}
 }
 
+/* The next slot's prepare if it sends, else its slot work at the old restore time */
 static void schedule_prepare(void)
 {
-	uint32_t local = beacon_tx_next() - beacon_clock_offset();
+	uint64_t send;
 
-	t3_compare(1, t3_at(local - TX_LEAD_US - PREP_US), &due_prepare);
+	if (beacon_tx_next_send(&send)) {
+		t3_compare(1, t3_at(beacon_tx_local(send) - TX_LEAD_US - PREP_US), &due_prepare);
+	} else {
+		t3_compare(1, t3_at(beacon_tx_local(beacon_tx_next()) + RESTORE_US), &due_prepare);
+	}
 }
 
 static void prepare(void)
 {
 	uint32_t t0 = t3_now();
-	uint32_t local = beacon_tx_next() - beacon_clock_offset();
+	uint64_t send;
+
+	if (!beacon_tx_next_send(&send)) {
+		/* No beacon in this slot: ESB keeps the radio */
+		beacon_app_slot(beacon_tx_pass());
+		schedule_prepare();
+		return;
+	}
+	uint32_t local = beacon_tx_local(send);
 
 	if ((int32_t)(local - TX_LEAD_US - beacon_now()) < MIN_LEAD_US) {
 		beacon_app_slot(beacon_tx_skip());
@@ -182,7 +199,7 @@ static void prepare(void)
 	beacon_tx_radio_setup();
 	NRF_RADIO->EVENTS_END = 0;
 	slot_arm = beacon_tx_arm(&slot_ts);
-	slot_local = slot_ts - beacon_clock_offset();
+	slot_local = local;
 	state = ON_AIR;
 
 	uint32_t ticks = t3_now() - t0;
@@ -300,15 +317,17 @@ uint8_t rift_ack_payload(uint32_t pipe, uint8_t *data)
 		return 0;
 	}
 	unsigned int key = irq_lock();
-	uint32_t a_t3 = anchor_t3, a_local = anchor_local, ofs = beacon_clock_offset();
+	uint32_t a_t3 = anchor_t3, a_local = anchor_local;
 
 	irq_unlock(key);
 
 	int32_t d = (int32_t)(c - a_t3);                 /* 1/16 us after the tie */
-	uint32_t us = a_local + ofs + (uint32_t)(d >> 4); /* beacon clock, floored */
+	uint64_t us = beacon_tx_clock(a_local + (uint32_t)(d >> 4)); /* beacon clock, floored */
 	uint32_t period = beacon_app_period();
-	uint32_t frame = us / period;
-	uint32_t offset = (us % period) * 16 + (d & 15);
+	uint64_t q = us / period;                        /* one 64-bit divide: this runs in
+							    the acknowledgement's ramp-up */
+	uint32_t frame = (uint32_t)q;                    /* 48-bit clock: wraps after 1.5 years */
+	uint32_t offset = (uint32_t)(us - q * period) * 16 + (d & 15);
 
 	arrival_frame = frame;
 	arrival_offset = offset;
@@ -403,7 +422,7 @@ static bool band_command(const char *line)
 		}
 	}
 	uint32_t period = beacon_app_period();
-	uint32_t frame = (beacon_now() + beacon_clock_offset()) / period + (uint32_t)lead;
+	uint32_t frame = (uint32_t)(beacon_clock_now() / period) + (uint32_t)lead;
 	unsigned int key = irq_lock();
 
 	cmd_type = type;

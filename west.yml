@@ -13,4 +13,4 @@ manifest:
     - name: riftcv1-mocap
       path: riftcv1-mocap
       url: https://github.com/BenMurphy-DroneTech/riftcv1-mocap.git
-      revision: 64ca4fe73ea21c88f435f2c220819e8f3cbb1054
+      revision: 71fbbfb846f366438dd6397e0ec20f0fdd521f62
